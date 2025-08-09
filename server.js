@@ -2,10 +2,11 @@
 import express from 'express';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
-
+import cors from 'cors';
 dotenv.config();
 
 const app = express();
+app.use(cors());
 
 async function refreshAccessToken() {
   const authHeader = Buffer.from(
