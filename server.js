@@ -1,25 +1,21 @@
+// server.js
 import express from 'express';
 import fetch from 'node-fetch';
 import dotenv from 'dotenv';
+
 dotenv.config();
-import cors from 'cors';
 
 const app = express();
 
-app.use(cors());
-
-let accessToken = null;
-let tokenExpiresAt = 0;
-
 async function refreshAccessToken() {
-  const basicAuth = Buffer.from(
+  const authHeader = Buffer.from(
     `${process.env.SPOTIFY_CLIENT_ID}:${process.env.SPOTIFY_CLIENT_SECRET}`
   ).toString('base64');
 
-  const res = await fetch('https://accounts.spotify.com/api/token', {
+  const response = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
     headers: {
-      Authorization: `Basic ${basicAuth}`,
+      Authorization: `Basic ${authHeader}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({
@@ -28,49 +24,45 @@ async function refreshAccessToken() {
     }),
   });
 
-  if (!res.ok) {
-    throw new Error(`Failed to refresh token: ${res.status}`);
-  }
-  const data = await res.json();
-  accessToken = data.access_token;
-  tokenExpiresAt = Date.now() + data.expires_in * 1000 - 60000; // refresh 1 min early
+  const data = await response.json();
+  return data.access_token;
 }
 
-async function ensureAccessToken(req, res, next) {
-  if (!accessToken || Date.now() >= tokenExpiresAt) {
-    await refreshAccessToken();
-  }
-  next();
-}
-
-// Endpoint to get currently playing track
-app.get(
-  '/api/spotify-currently-playing',
-  ensureAccessToken,
-  async (req, res) => {
-    const spotifyRes = await fetch(
+app.get('/currently-playing', async (req, res) => {
+  try {
+    const accessToken = await refreshAccessToken();
+    console.log('Access Token:', accessToken); // Debugging line to check the access token
+    const nowPlaying = await fetch(
       'https://api.spotify.com/v1/me/player/currently-playing',
       {
         headers: { Authorization: `Bearer ${accessToken}` },
       }
     );
 
-    if (spotifyRes.status === 204) {
-      return res.json({ playing: false });
+    if (nowPlaying.status === 204) {
+      return res.json({ isPlaying: false });
     }
 
-    const data = await spotifyRes.json();
-    res.json({
-      playing: true,
-      song: data.item.name,
-      artist: data.item.artists.map((a) => a.name).join(', '),
-      album: data.item.album.name,
-      albumArt: data.item.album.images[0]?.url,
-      link: data.item.external_urls.spotify,
-    });
-  }
-);
+    if (!nowPlaying.ok) {
+      const errorText = await nowPlaying.text();
+      return res.status(nowPlaying.status).json({
+        error: errorText || 'Failed to fetch currently playing track',
+      });
+    }
 
-app.listen(process.env.PORT, () => {
-  console.log(`Server running on port ${process.env.PORT}`);
+    const song = await nowPlaying.json();
+    res.json({
+      isPlaying: song.is_playing,
+      title: song.item.name,
+      artist: song.item.artists.map((a) => a.name).join(', '),
+      albumArt: song.item.album.images[0].url,
+      trackUrl: song.item.external_urls.spotify,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(3000, () => {
+  console.log('Server running on http://localhost:3000');
 });
